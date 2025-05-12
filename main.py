@@ -37,11 +37,9 @@ class RobotRaceTracker:
     def get_finish_line_points(self):
         """Calculate finish line endpoints based on current parameters"""
         if self.finish_line_angle == 0:  # Horizontal line
-            return ((self.finish_line_x1, self.finish_line_y), 
-                    (self.finish_line_x2, self.finish_line_y))
+            return ((self.finish_line_x1, self.finish_line_y), (self.finish_line_x2, self.finish_line_y))
         elif self.finish_line_angle == 90:  # Vertical line
-            return ((self.finish_line_y, self.finish_line_x1), 
-                    (self.finish_line_y, self.finish_line_x2))
+            return ((self.finish_line_y, self.finish_line_x1), (self.finish_line_y, self.finish_line_x2))
         else:
             # For angled lines (not fully implemented)
             center_x = (self.finish_line_x1 + self.finish_line_x2) // 2
@@ -58,12 +56,23 @@ class RobotRaceTracker:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         positions = {}
         
+        # Create a mask to exclude the finish line area
+        mask_exclude_line = np.ones(frame.shape[:2], dtype=np.uint8) * 255
+        line_p1, line_p2 = self.get_finish_line_points()
+        
+        # Create a thicker line for masking (to exclude area around the line)
+        line_thickness = self.finish_line_thickness + 20  # Add buffer around the line
+        cv2.line(mask_exclude_line, line_p1, line_p2, 0, line_thickness)
+        
         for color_name, (lower, upper) in self.color_ranges.items():
             lower = np.array(lower, dtype=np.uint8)
             upper = np.array(upper, dtype=np.uint8)
-            mask = cv2.inRange(hsv, lower, upper)
+            color_mask = cv2.inRange(hsv, lower, upper)
             
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # Combine with our exclusion mask
+            combined_mask = cv2.bitwise_and(color_mask, color_mask, mask=mask_exclude_line)
+            
+            contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             if contours:
                 largest_contour = max(contours, key=cv2.contourArea)
