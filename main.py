@@ -17,10 +17,22 @@ class RobotRaceTracker:
         
         # Robot color ranges in HSV
         self.color_ranges = {
-            'red': ([0, 100, 100], [10, 255, 255]),
-            'blue': ([100, 100, 100], [130, 255, 255]),
-            'green': ([40, 100, 100], [80, 255, 255]),
-            'yellow': ([20, 100, 100], [40, 255, 255])
+             # Primary colors
+            'red': ([0, 150, 100], [10, 255, 255]),
+            'blue': ([100, 150, 100], [130, 255, 255]),
+            'green': ([50, 150, 100], [70, 255, 255]),
+            'yellow': ([20, 150, 100], [40, 255, 255]),
+            
+            # Secondary colors
+            'orange': ([10, 150, 100], [20, 255, 255]),
+            'purple': ([130, 150, 100], [160, 255, 255]),
+            'pink': ([160, 100, 100], [180, 255, 255]),
+            
+            # Additional distinct colors
+            'cyan': ([80, 150, 100], [100, 255, 255]),
+            'magenta': ([170, 150, 100], [180, 255, 255]),
+            'lime': ([40, 150, 100], [50, 255, 255]),
+            'teal': ([70, 150, 100], [80, 255, 255])
         }
         
         # Tracking variables
@@ -37,9 +49,11 @@ class RobotRaceTracker:
     def get_finish_line_points(self):
         """Calculate finish line endpoints based on current parameters"""
         if self.finish_line_angle == 0:  # Horizontal line
-            return ((self.finish_line_x1, self.finish_line_y), (self.finish_line_x2, self.finish_line_y))
+            return ((self.finish_line_x1, self.finish_line_y), 
+                    (self.finish_line_x2, self.finish_line_y))
         elif self.finish_line_angle == 90:  # Vertical line
-            return ((self.finish_line_y, self.finish_line_x1), (self.finish_line_y, self.finish_line_x2))
+            return ((self.finish_line_y, self.finish_line_x1), 
+                    (self.finish_line_y, self.finish_line_x2))
         else:
             # For angled lines (not fully implemented)
             center_x = (self.finish_line_x1 + self.finish_line_x2) // 2
@@ -56,34 +70,45 @@ class RobotRaceTracker:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         positions = {}
         
-        # Create a mask to exclude the finish line area
-        mask_exclude_line = np.ones(frame.shape[:2], dtype=np.uint8) * 255
-        line_p1, line_p2 = self.get_finish_line_points()
-        
-        # Create a thicker line for masking (to exclude area around the line)
-        line_thickness = self.finish_line_thickness + 20  # Add buffer around the line
-        cv2.line(mask_exclude_line, line_p1, line_p2, 0, line_thickness)
-        
         for color_name, (lower, upper) in self.color_ranges.items():
             lower = np.array(lower, dtype=np.uint8)
             upper = np.array(upper, dtype=np.uint8)
             color_mask = cv2.inRange(hsv, lower, upper)
             
-            # Combine with our exclusion mask
-            combined_mask = cv2.bitwise_and(color_mask, color_mask, mask=mask_exclude_line)
+            # Apply morphological operations to reduce noise
+            kernel = np.ones((5, 5), np.uint8)
+            color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_OPEN, kernel)
+            color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, kernel)
             
-            contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours, _ = cv2.findContours(color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             if contours:
-                largest_contour = max(contours, key=cv2.contourArea)
-                x, y, w, h = cv2.boundingRect(largest_contour)
-                center_x = x + w // 2
-                center_y = y + h // 2
-                positions[color_name] = (center_x, center_y)
+                # Filter out small contours that might be noise
+                contours = [c for c in contours if cv2.contourArea(c) > 100]
                 
-                cv2.circle(frame, (center_x, center_y), 10, (0, 255, 0), -1)
-                cv2.putText(frame, color_name, (center_x - 20, center_y - 20), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                if contours:
+                    largest_contour = max(contours, key=cv2.contourArea)
+                    x, y, w, h = cv2.boundingRect(largest_contour)
+                    center_x = x + w // 2
+                    center_y = y + h // 2
+                    
+                    # Get finish line points
+                    line_p1, line_p2 = self.get_finish_line_points()
+                    
+                    # Only exclude detection if the robot is right on the line
+                    if self.finish_line_angle == 0:  # Horizontal line
+                        on_line = abs(center_y - line_p1[1]) < 10 and \
+                                 line_p1[0] <= center_x <= line_p2[0]
+                    else:  # Vertical line
+                        on_line = abs(center_x - line_p1[0]) < 10 and \
+                                 line_p1[1] <= center_y <= line_p2[1]
+                    
+                    if not on_line:
+                        positions[color_name] = (center_x, center_y)
+                        
+                        cv2.circle(frame, (center_x, center_y), 10, (0, 255, 0), -1)
+                        cv2.putText(frame, color_name, (center_x - 20, center_y - 20), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
         return positions
     
