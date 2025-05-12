@@ -7,32 +7,36 @@ class RobotRaceTracker:
     def __init__(self):
         # Initialize video capture
         self.cap = cv2.VideoCapture(0)
+        if not self.cap.isOpened():
+            raise RuntimeError("Could not open video device")
+            
+        # Get initial frame to set up window
+        ret, frame = self.cap.read()
+        if not ret:
+            raise RuntimeError("Could not read initial frame")
         
         # Finish line parameters (will be adjustable)
-        self.finish_line_y = 300
-        self.finish_line_x1 = 100
-        self.finish_line_x2 = 500
+        self.finish_line_y = int(frame.shape[0] * 0.5)  # Start at 50% of frame height
+        self.finish_line_x1 = int(frame.shape[1] * 0.2)  # Start at 20% of frame width
+        self.finish_line_x2 = int(frame.shape[1] * 0.8)  # End at 80% of frame width
         self.finish_line_thickness = 2
         self.finish_line_angle = 0  # 0 = horizontal, 90 = vertical
         
-        # Robot color ranges in HSV
+        # Expanded robot color ranges in HSV
         self.color_ranges = {
-             # Primary colors
             'red': ([0, 150, 100], [10, 255, 255]),
             'blue': ([100, 150, 100], [130, 255, 255]),
             'green': ([50, 150, 100], [70, 255, 255]),
             'yellow': ([20, 150, 100], [40, 255, 255]),
-            
-            # Secondary colors
             'orange': ([10, 150, 100], [20, 255, 255]),
             'purple': ([130, 150, 100], [160, 255, 255]),
             'pink': ([160, 100, 100], [180, 255, 255]),
-            
-            # Additional distinct colors
             'cyan': ([80, 150, 100], [100, 255, 255]),
             'magenta': ([170, 150, 100], [180, 255, 255]),
             'lime': ([40, 150, 100], [50, 255, 255]),
-            'teal': ([70, 150, 100], [80, 255, 255])
+            'teal': ([70, 150, 100], [80, 255, 255]),
+            # 'white': ([0, 0, 200], [180, 50, 255]),
+            # 'black': ([0, 0, 0], [180, 255, 50])
         }
         
         # Tracking variables
@@ -46,8 +50,15 @@ class RobotRaceTracker:
         self.setup_mode = True
         self.line_confirmed = False
         
-    def get_finish_line_points(self):
+        # Create resizable window
+        cv2.namedWindow('Robot Race Tracker', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Robot Race Tracker', frame.shape[1], frame.shape[0])
+        
+    def get_finish_line_points(self, frame_shape=None):
         """Calculate finish line endpoints based on current parameters"""
+        if frame_shape is None:
+            frame_shape = (self.finish_line_x2 + 100, self.finish_line_y + 100)  # Default size
+        
         if self.finish_line_angle == 0:  # Horizontal line
             return ((self.finish_line_x1, self.finish_line_y), 
                     (self.finish_line_x2, self.finish_line_y))
@@ -55,7 +66,6 @@ class RobotRaceTracker:
             return ((self.finish_line_y, self.finish_line_x1), 
                     (self.finish_line_y, self.finish_line_x2))
         else:
-            # For angled lines (not fully implemented)
             center_x = (self.finish_line_x1 + self.finish_line_x2) // 2
             center_y = self.finish_line_y
             length = abs(self.finish_line_x2 - self.finish_line_x1)
@@ -73,9 +83,14 @@ class RobotRaceTracker:
         for color_name, (lower, upper) in self.color_ranges.items():
             lower = np.array(lower, dtype=np.uint8)
             upper = np.array(upper, dtype=np.uint8)
-            color_mask = cv2.inRange(hsv, lower, upper)
             
-            # Apply morphological operations to reduce noise
+            if color_name == 'red':
+                mask1 = cv2.inRange(hsv, np.array([0, 150, 100]), np.array([10, 255, 255]))
+                mask2 = cv2.inRange(hsv, np.array([170, 150, 100]), np.array([180, 255, 255]))
+                color_mask = cv2.bitwise_or(mask1, mask2)
+            else:
+                color_mask = cv2.inRange(hsv, lower, upper)
+            
             kernel = np.ones((5, 5), np.uint8)
             color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_OPEN, kernel)
             color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, kernel)
@@ -83,35 +98,30 @@ class RobotRaceTracker:
             contours, _ = cv2.findContours(color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             if contours:
-                # Filter out small contours that might be noise
                 contours = [c for c in contours if cv2.contourArea(c) > 100]
-                
                 if contours:
                     largest_contour = max(contours, key=cv2.contourArea)
                     x, y, w, h = cv2.boundingRect(largest_contour)
                     center_x = x + w // 2
                     center_y = y + h // 2
                     
-                    # Get finish line points
-                    line_p1, line_p2 = self.get_finish_line_points()
+                    line_p1, line_p2 = self.get_finish_line_points(frame.shape)
                     
-                    # Only exclude detection if the robot is right on the line
-                    if self.finish_line_angle == 0:  # Horizontal line
+                    if self.finish_line_angle == 0:
                         on_line = abs(center_y - line_p1[1]) < 10 and \
                                  line_p1[0] <= center_x <= line_p2[0]
-                    else:  # Vertical line
+                    else:
                         on_line = abs(center_x - line_p1[0]) < 10 and \
                                  line_p1[1] <= center_y <= line_p2[1]
                     
                     if not on_line:
                         positions[color_name] = (center_x, center_y)
-                        
                         cv2.circle(frame, (center_x, center_y), 10, (0, 255, 0), -1)
                         cv2.putText(frame, color_name, (center_x - 20, center_y - 20), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
         return positions
-    
+
     def check_finish_line_crossing(self, positions):
         current_time = time.time() - self.start_time
         line_p1, line_p2 = self.get_finish_line_points()
@@ -120,11 +130,10 @@ class RobotRaceTracker:
             if color in self.robot_positions:
                 prev_x, prev_y = self.robot_positions[color]
                 
-                # Check if line was crossed (simple version - could be improved)
-                if self.finish_line_angle == 0:  # Horizontal line
+                if self.finish_line_angle == 0:
                     crossed = (prev_y <= line_p1[1] and y > line_p1[1]) or \
                               (prev_y >= line_p1[1] and y < line_p1[1])
-                else:  # Vertical line
+                else:
                     crossed = (prev_x <= line_p1[0] and x > line_p1[0]) or \
                               (prev_x >= line_p1[0] and x < line_p1[0])
                 
@@ -194,7 +203,7 @@ class RobotRaceTracker:
             frame = cv2.flip(frame, 1)
             
             # Draw finish line
-            line_p1, line_p2 = self.get_finish_line_points()
+            line_p1, line_p2 = self.get_finish_line_points(frame.shape)
             line_color = (0, 0, 255) if not self.line_confirmed else (0, 255, 0)
             cv2.line(frame, line_p1, line_p2, line_color, self.finish_line_thickness)
             
@@ -208,7 +217,6 @@ class RobotRaceTracker:
             
             if self.setup_mode:
                 if not self.line_confirmed:
-                    # Finish line adjustment
                     if key == ord('w'): self.finish_line_y -= 5
                     elif key == ord('s'): self.finish_line_y += 5
                     elif key == ord('a'): 
@@ -229,7 +237,6 @@ class RobotRaceTracker:
                     elif key == 27:  # ESC key
                         self.line_confirmed = False
             else:
-                # Normal operation mode
                 if key == ord(' '):  # Space bar
                     self.paused = not self.paused
                     if not self.paused:
@@ -240,7 +247,6 @@ class RobotRaceTracker:
                     break
             
             if not self.paused and not self.setup_mode:
-                # Detect robots and check finish line
                 positions = self.detect_robots(frame)
                 if positions:
                     if not self.race_started:
@@ -248,18 +254,20 @@ class RobotRaceTracker:
                         print("Race started!")
                     self.check_finish_line_crossing(positions)
             
-            # Display leaderboard and instructions
             if not self.setup_mode:
                 self.display_leaderboard(frame)
             self.display_instructions(frame)
             
-            # Show frame
+            # Show resizable frame
             cv2.imshow('Robot Race Tracker', frame)
+            
+            # Handle window resize
+            if cv2.getWindowProperty('Robot Race Tracker', cv2.WND_PROP_VISIBLE) < 1:
+                break
                 
         self.cap.release()
         cv2.destroyAllWindows()
         
-        # Print final results
         print("\nFinal Results:")
         for i, (color, t) in enumerate(sorted(self.leaderboard, key=lambda x: x[1])):
             print(f"{i+1}. {color} robot: {t:.2f} seconds")
