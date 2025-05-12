@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import time
 from collections import defaultdict
+import os  # Added for Docker compatibility
 
 class RobotRaceTracker:
     def __init__(self):
@@ -37,9 +38,11 @@ class RobotRaceTracker:
     def get_finish_line_points(self):
         """Calculate finish line endpoints based on current parameters"""
         if self.finish_line_angle == 0:  # Horizontal line
-            return ((self.finish_line_x1, self.finish_line_y), (self.finish_line_x2, self.finish_line_y))
+            return ((self.finish_line_x1, self.finish_line_y), 
+                    (self.finish_line_x2, self.finish_line_y))
         elif self.finish_line_angle == 90:  # Vertical line
-            return ((self.finish_line_y, self.finish_line_x1), (self.finish_line_y, self.finish_line_x2))
+            return ((self.finish_line_y, self.finish_line_x1), 
+                    (self.finish_line_y, self.finish_line_x2))
         else:
             # For angled lines (not fully implemented)
             center_x = (self.finish_line_x1 + self.finish_line_x2) // 2
@@ -228,11 +231,16 @@ class RobotRaceTracker:
                 self.display_leaderboard(frame)
             self.display_instructions(frame)
             
-            # Show frame
-            cv2.imshow('Robot Race Tracker', frame)
+            # Show frame (with Docker compatibility check)
+            if os.environ.get('DISPLAY'):
+                cv2.imshow('Robot Race Tracker', frame)
+            else:
+                # Running headless, just process frames without showing
+                pass
                 
         self.cap.release()
-        cv2.destroyAllWindows()
+        if os.environ.get('DISPLAY'):
+            cv2.destroyAllWindows()
         
         # Print final results
         print("\nFinal Results:")
@@ -240,5 +248,10 @@ class RobotRaceTracker:
             print(f"{i+1}. {color} robot: {t:.2f} seconds")
 
 if __name__ == "__main__":
+    # Try to use the first available camera (0) or a video source
     tracker = RobotRaceTracker()
+    
+    # For Docker, you might want to use a video file instead:
+    # tracker.cap = cv2.VideoCapture('race.mp4')
+    
     tracker.run()
